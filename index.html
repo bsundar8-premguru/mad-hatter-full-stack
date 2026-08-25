@@ -1093,7 +1093,68 @@ function parseCreateAIJson(responseText) {
   }
 }
 
-async function callCreateAI({instructions,input,schemaName,schema}) {
+function parseHatTextResponse(responseText) {
+  const cleaned=String(responseText || '')
+    .replace(/^```(?:text|markdown)?\s*/i,'')
+    .replace(/\s*```$/,'')
+    .trim();
+
+  if(!cleaned) {
+    throw new Error('ASU CreateAI returned an empty response.');
+  }
+
+  const lines=cleaned
+    .split(/\r?\n/)
+    .map(line=>line
+      .replace(/^#{1,6}\s*/,'')
+      .replace(/\*\*/g,'')
+      .replace(/__/g,'')
+      .trim()
+    )
+    .filter(Boolean);
+
+  let definition='';
+  const parsedQuestions=[];
+
+  for(const line of lines) {
+    const questionMatch=line.match(
+      /^(?:\d{1,2}[.)]|[-*•])\s+(.+)$/
+    );
+
+    if(questionMatch) {
+      const question=questionMatch[1].trim();
+
+      if(question) {
+        parsedQuestions.push(question);
+      }
+
+      continue;
+    }
+
+    if(
+      !definition &&
+      !/^questions?\s*:?\s*$/i.test(line)
+    ) {
+      definition=line.replace(/^definition\s*:\s*/i,'').trim();
+    }
+  }
+
+  if(parsedQuestions.length<3) {
+    throw new Error(
+      'ASU CreateAI returned text, but the app could not find at least three numbered questions.'
+    );
+  }
+
+  return {
+    definition:
+      definition ||
+      hats[selectedHat]?.definition ||
+      'Selected thinking perspective',
+    questions:parsedQuestions.slice(0,5)
+  };
+}
+
+async function callCreateAI({instructions,input,schemaName,schema,textParser=null}) {
   const prompt=`${instructions}\n\n${input}\n\nReturn ONLY valid JSON. Do not use markdown code fences. The JSON must satisfy this JSON Schema:\n${JSON.stringify(schema)}`;
 
   let res;
@@ -1122,16 +1183,29 @@ async function callCreateAI({instructions,input,schemaName,schema}) {
     throw new Error('ASU CreateAI returned no response.');
   }
 
+    let parsed;
+
   try {
-    const parsed=parseCreateAIJson(data.response);
-    aiAvailable=true;
-    lastAiError='';
-    return parsed;
-  } catch(error) {
-    aiAvailable=false;
-    lastAiError=error?.message || 'Unreadable JSON response.';
-    throw error;
+    parsed=parseCreateAIJson(data.response);
+  } catch(jsonError) {
+    if(typeof textParser!=='function') {
+      aiAvailable=false;
+      lastAiError=jsonError?.message || 'Unreadable JSON response.';
+      throw jsonError;
+    }
+
+    try {
+      parsed=textParser(data.response);
+    } catch(textError) {
+      aiAvailable=false;
+      lastAiError=textError?.message || 'Unreadable CreateAI response.';
+      throw textError;
+    }
   }
+
+  aiAvailable=true;
+  lastAiError='';
+  return parsed;
 }
 
 function priorSequenceContext(batchId) {
@@ -1162,6 +1236,7 @@ async function requestHatQuestions(key,idea,{sequenceIndex=null,batchId=''}={}) 
       instructions:HAT_SYSTEM_INSTRUCTIONS,
       input:`SELECTED HAT: ${h.name}\nHAT ROLE: ${HAT_GUIDANCE[key]}\nDESIGN IDEA: ${idea}\nMODE CONTEXT: ${sequenceNote}\nPREVIOUS QUESTIONS IN THIS ALL-HATS SEQUENCE:\n${batchId ? priorSequenceContext(batchId) : 'None.'}\n\nReturn the selected hat definition and 3 to 5 questions only through the required JSON structure.`,
       schemaName:'six_hats_questions',
+      textParser:parseHatTextResponse,
       schema:{
         type:'object',
         additionalProperties:false,
