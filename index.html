@@ -1524,7 +1524,6 @@ function enterReviewMode(focus=true) {
   thinkingPane.setAttribute('aria-label','Return to thinking hats workspace');
   updateHatAvailability();
   if(lastReviewResult) renderStoredReview(lastReviewResult);
-  if(save)
   if(focus) setTimeout(()=>refinedIdea.focus(),500);
 }
 
@@ -1535,7 +1534,6 @@ function exitReviewMode(focus=true) {
   thinkingPane.removeAttribute('role');
   thinkingPane.setAttribute('aria-label','Thinking hats workspace');
   updateHatAvailability();
-  if(save)
   if(focus) setTimeout(()=>progressReview.focus(),430);
 }
 
